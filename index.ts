@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import * as fs from 'fs'
 import * as os from 'os'
+import * as path from 'path'
 import { Key } from 'readline'
 import { execSync } from 'child_process'
-import { prompt, registerPrompt } from 'inquirer'
+import { prompt, registerPrompt, Separator } from 'inquirer'
 import * as chalk from 'chalk'
-import { fixCmdWinSlashes } from './fix-cmd-win-slashes'
 
 registerPrompt('autocomplete', require('inquirer-autocomplete-prompt'))
 
@@ -40,7 +40,7 @@ export const promptAutocomplete =
         return Promise.resolve(
           (items as any[]).filter((item) => {
             return input
-              ? fuzzyMatch(item.name || item, input)
+              ? fuzzyMatch(item.value || item, input)
               : true
           })
         )
@@ -67,10 +67,28 @@ export const promptInput =
 
 const packageFile = 'package.json'
 
+const argsHas = (value: string) =>
+  process.argv.reduce((has, arg) => has || arg === value, false)
+
+const binScripts: { [name: string]: string } = {}
+
+if (argsHas('--bin')) {
+  const binFolder = path.join(process.cwd(), 'node_modules', '.bin');
+
+  if (fs.existsSync(binFolder)) {
+    fs.readdirSync(binFolder).filter(name => !/.cmd$/.test(name))
+      .forEach((name) => {
+        binScripts[name] = `${path.join('.bin', name)}`;
+      })
+  }
+}
+
 const execute = async () => {
   if (fs.existsSync(packageFile)) {
     const pkg = JSON.parse(fs.readFileSync(packageFile, 'utf-8'))
-    const scriptNames = Object.keys(pkg.scripts || {})
+    const scripts = Object.assign({}, pkg.scripts, Object.assign(binScripts, pkg.script))
+    const scriptNames = Object.keys(scripts || {})
+
     if (scriptNames.length) {
       let askForParams = false
       const keyListener = (ch: string, key: Key) => {
@@ -85,20 +103,18 @@ const execute = async () => {
         .map(scriptsName => scriptsName.length).sort((a, b) => a - b).reverse()[0]
       const padName = (name: string) => name + (new Array(longestTaskName - name.length + 3)).join(' ')
 
-      const scriptName = await promptAutocomplete('Choose task to run\n(use `Space` if you want to add params to script)',
+      const scriptName = await promptAutocomplete('Choose task to run, use `space` to add params to script:\n',
         scriptNames.map(value => ({
-          value, name: padName(value) + chalk.gray(` (${pkg.scripts[value]})`)
+          value, name: padName(value) + chalk.gray(` (${scripts[value]})`)
         }))
       )
       process.stdin.removeListener('keypress', keyListener)
-      const cmd = pkg.scripts[scriptName]
-      const cmdFixed = os.platform() === 'win32'
-        ? fixCmdWinSlashes(cmd) : cmd
+      const cmd = 'yarn run ' + scriptName
       if (askForParams) {
         const params = await promptInput('Add params to script:')
-        exec(cmdFixed + ' ' + params)
+        exec(cmd + ' -- ' + params)
       } else {
-        exec(cmdFixed)
+        exec(cmd)
       }
     } else {
       console.log(`yrun: no scripts to execute in ${packageFile}.`)
