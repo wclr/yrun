@@ -24,15 +24,9 @@ export function exec(cmd: string) {
 }
 
 export function fuzzyMatch(str: string, pattern: string) {
-  // pattern = pattern.split('').reduce((a, b) => {
-  //   return a + '.*' + b
-  // })
-  //return (new RegExp(pattern, 'i')).test(str);
-
   return !pattern.split(/\s+/).reduce((notMatch, part) => {
     return notMatch || !(new RegExp('(^|\\W)' + part, 'i')).test(str)
   }, false)
-
 }
 
 export const promptAutocomplete =
@@ -45,7 +39,7 @@ export const promptAutocomplete =
         return Promise.resolve(
           (items as any[]).filter((item) => {
             return input
-              ? fuzzyMatch(item.searchValue || item.value, input)
+              ? fuzzyMatch(item.searchValue || item.name, input)
               : true
           })
         )
