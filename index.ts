@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import * as fs from 'fs'
-import * as os from 'os'
 import * as path from 'path'
 import { Key } from 'readline'
 import { execSync } from 'child_process'
-import { prompt, registerPrompt, Separator } from 'inquirer'
+import { prompt, registerPrompt } from 'inquirer'
 import * as chalk from 'chalk'
+import * as glob from 'glob'
 
 registerPrompt('autocomplete', require('inquirer-autocomplete-prompt'))
 
@@ -24,14 +24,19 @@ export function exec(cmd: string) {
 }
 
 export function fuzzyMatch(str: string, pattern: string) {
-  pattern = pattern.split('').reduce((a, b) => {
-    return a + '.*' + b
-  })
-  return (new RegExp(pattern, 'i')).test(str);
+  // pattern = pattern.split('').reduce((a, b) => {
+  //   return a + '.*' + b
+  // })
+  //return (new RegExp(pattern, 'i')).test(str);
+
+  return !pattern.split(/\s+/).reduce((notMatch, part) => {
+    return notMatch || !(new RegExp('(^|\\W)' + part, 'i')).test(str)
+  }, false)
+
 }
 
 export const promptAutocomplete =
-  (message: string, items: string[] | { value: string, name: string }[]): Promise<string> => {
+  <T>(message: string, items: { value: T, name: string, searchValue?: string }[]): Promise<T> => {
     return prompt(<any>{
       type: 'autocomplete',
       message,
@@ -40,7 +45,7 @@ export const promptAutocomplete =
         return Promise.resolve(
           (items as any[]).filter((item) => {
             return input
-              ? fuzzyMatch(item.value || item, input)
+              ? fuzzyMatch(item.searchValue || item.value, input)
               : true
           })
         )
@@ -67,61 +72,128 @@ export const promptInput =
 
 const packageFile = 'package.json'
 
-const argsHas = (value: string) =>
+const hasArg = (value: string) =>
   process.argv.reduce((has, arg) => has || arg === value, false)
 
-const binScripts: { [name: string]: string } = {}
+const globIgnorePatterns = [
+  '**/node_modules/**',
+  '**/jspm_packages/**',
+  '**/bower_components/**'
+]
 
-if (argsHas('--bin')) {
-  const binFolder = path.join(process.cwd(), 'node_modules', '.bin');
+const readPackageFile = (packageFile: string) =>
+  new Promise<PackageManifest>((resolve, reject) =>
+    fs.readFile(packageFile, 'utf-8', (err, data) => {
+      err ? reject(err) : resolve(JSON.parse(data))
+    })
+  )
 
-  if (fs.existsSync(binFolder)) {
-    fs.readdirSync(binFolder).filter(name => !/.cmd$/.test(name))
-      .forEach((name) => {
-        binScripts[name] = `${path.join('.bin', name)}`;
-      })
+const findPackageFiles = (all: boolean) => {
+  const globPattern = all ? '**/package.json' : 'package.json'
+  const options = {
+    cwd: process.cwd(),
+    ignore: globIgnorePatterns
   }
+  return new Promise<string[]>((resolve) => {
+    glob(globPattern, options, (err, matches) => {
+      resolve(matches)
+    })
+  })
+}
+
+type DirScript = { name: string, cmd: string, dir: string, dirParts: string[] }
+
+const getScriptsFromPackageFiles = async (files: string[]) => {
+  const pgks = await Promise.all(files.map(readPackageFile))
+  return pgks
+    .reduce<DirScript[]>((packageScirpts, pkg, fileNumber) =>
+      packageScirpts.concat(
+        Object.keys(pkg.scripts || []).map(name => ({
+          name,
+          cmd: pkg.scripts![name],
+          dir: path.dirname(files[fileNumber]),
+          dirParts: files[fileNumber].split(/\\|\//).slice(0, -1)
+        })))
+    , []).sort((a, b) =>
+      (a.dirParts.length - b.dirParts.length) ||
+      ((b.dir === a.dir) ? 0 : (b.dir > a.dir) ? -1 : 1)
+    )
 }
 
 const execute = async () => {
-  if (fs.existsSync(packageFile)) {
-    const pkg = JSON.parse(fs.readFileSync(packageFile, 'utf-8'))
-    const scripts = Object.assign({}, pkg.scripts, Object.assign(binScripts, pkg.script))
-    const scriptNames = Object.keys(scripts || {})
 
-    if (scriptNames.length) {
-      let askForParams = false
-      const keyListener = (ch: string, key: Key) => {
-        if (key.name === 'space') {
-          process.stdin.emit('keypress', '', { name: 'enter' })
-          askForParams = true
-        }
-      }
-      process.stdin.addListener('keypress', keyListener)
+  const files = await findPackageFiles(hasArg('all'))
 
-      const longestTaskName = scriptNames
-        .map(scriptsName => scriptsName.length).sort((a, b) => a - b).reverse()[0]
-      const padName = (name: string) => name + (new Array(longestTaskName - name.length + 3)).join(' ')
-
-      const scriptName = await promptAutocomplete('Choose task to run, use `space` to add params to script:\n',
-        scriptNames.map(value => ({
-          value, name: padName(value) + chalk.gray(` (${scripts[value]})`)
-        }))
-      )
-      process.stdin.removeListener('keypress', keyListener)
-      const cmd = 'yarn run ' + scriptName
-      if (askForParams) {
-        const params = await promptInput('Add params to script:')
-        exec(cmd + ' -- ' + params)
-      } else {
-        exec(cmd)
-      }
-    } else {
-      console.log(`yrun: no scripts to execute in ${packageFile}.`)
-    }
-  } else {
-    console.log(`yrun: can not find ${packageFile} in current directory.`)
+  if (!files.length) {
+    console.log(`yrun: no scripts to execute in ${packageFile}.`)
+    return
   }
+
+  const dirScripts = await getScriptsFromPackageFiles(files)
+
+  if (!dirScripts.length) {
+    console.log(`yrun: no scripts to execute found.`)
+    return
+  }
+  let askForParams = false
+  const keyListener = (ch: string, key: Key) => {
+    if (key.name === 'escape') {
+      process.exit(0)
+    }
+  }
+  process.stdin.addListener('keypress', keyListener)
+
+  const getMenuName = (value: DirScript) => chalk.green(value.dirParts.join('/')) +
+    (value.dirParts.length ? ': ' : '') +
+    value.name
+
+  const longestTaskName = dirScripts
+    .map(script => script.name)
+    .map(name => name.length).sort((a, b) => a - b).reverse()[0]
+
+  const padName = (name: string, addMore: number) => name +
+    (new Array(Math.max(longestTaskName - name.length + addMore, 0)))
+      .join(' ')
+
+  const shotern = (str: string, maxLength: number) =>
+    str.substr(0, maxLength) + (str.length > maxLength ? '...' : '')
+
+  const maxAvailableWidth = (process.stdout as any).columns as number - 15
+
+  const choises = dirScripts.map((value, i) => ({
+    value, name:
+    padName(getMenuName(value), (value.dir.length)) +
+    chalk.gray(` (${shotern(value.cmd, maxAvailableWidth - getMenuName(value).length)})`),
+    searchValue: value.dirParts.join(' ') + ' ' + value.name
+  }))
+
+  const showChoise = async () => {
+    const scriptToRun = await promptAutocomplete(
+      'Choose script task to run:\n',
+      choises
+    )
+
+    const action = await promptAutocomplete(
+      `Proceed with running ${scriptToRun.name}?:`, [
+        { value: 'run', name: 'Yes run it!' },
+        { value: 'params', name: 'Let\'s add params to the script!' },
+        { value: 'return', name: 'No, I changed my mind.' }
+      ])
+    if (action === 'return') {
+      showChoise()
+      return
+    }
+    let execCmd = (
+      scriptToRun.dirParts.length ? `cd ${scriptToRun.dir} && ` : '') +
+      'yarn run ' + scriptToRun.name
+    if (action === 'params') {
+      const params = await promptInput('Add params to script:')
+      execCmd += ' -- ' + params
+    }
+    process.stdin.removeListener('keypress', keyListener)
+    exec(execCmd)
+  }
+  showChoise()
 }
 
 execute()

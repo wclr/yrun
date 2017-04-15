@@ -1,8 +1,8 @@
 # YRun
 
-> Better **yarn run**.
+> Better **yarn run**. 
 
-## What?
+## Why?
 
 ![yrun](https://cloud.githubusercontent.com/assets/736697/25063148/1f597de0-21f6-11e7-852e-577be809e4d6.gif)
 
@@ -17,7 +17,9 @@
 
 ## Usage 
 
-Yes, you can. Make *yarn scripts* great again.
+`yrun` - Will get all scripts from `package.json` in current folder and show autocomplete menu with scripts names to run.
+
+`yrun all` - Will get scripts from all `package.json` files in the project's tree.
 
 ## Licence
 
