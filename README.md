@@ -8,7 +8,7 @@
 
 ## Install
 
-![npm (scoped)](https://img.shields.io/npm/v/yloc.svg?maxAge=86400)
+![npm (scoped)](https://img.shields.io/npm/v/yrun.svg?maxAge=86400)
 
 ```
   npm i yrun -g
