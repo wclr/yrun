@@ -23,11 +23,19 @@ export function exec(cmd: string) {
   execSync(cmd, execOptions)
 }
 
-export function fuzzyMatch(str: string, pattern: string) {
-  return !pattern.split(/\s+/).reduce((notMatch, part) => {
-    return notMatch || !(new RegExp('(^|\\W)' + part, 'i')).test(str)
-  }, false)
-}
+const fuzzyMatch = (str: string, pattern: string) =>
+  (new RegExp(
+    pattern.split('').reduce((a, b) => a + '.*' + b)
+    , 'i')).test(str);
+
+
+const matchParts = (str: string, pattern: string) =>
+  !pattern.split(/[\s\/\\]+/).reduce((notMatch, part) =>
+    notMatch || !(new RegExp('(^|\\W)' + part, 'i')).test(str)
+    , false)
+
+const match = (str: string, pattern: string) =>
+  matchParts(str, pattern) || fuzzyMatch(str, pattern)
 
 export const promptAutocomplete =
   <T>(message: string, items: { value: T, name: string, searchValue?: string }[]): Promise<T> => {
@@ -39,11 +47,12 @@ export const promptAutocomplete =
         return Promise.resolve(
           (items as any[]).filter((item) => {
             return input
-              ? fuzzyMatch(item.searchValue || item.name, input)
+              ? match(item.searchValue || item.name, input)
               : true
           })
         )
       },
+      pageSize: 15
     }).then(({ result }) => {
       return result
     }).catch((e) => {
@@ -109,8 +118,10 @@ const getScriptsFromPackageFiles = async (files: string[]) => {
           dirParts: files[fileNumber].split(/\\|\//).slice(0, -1)
         })))
     , []).sort((a, b) =>
-      (a.dirParts.length - b.dirParts.length) ||
-      ((b.dir === a.dir) ? 0 : (b.dir > a.dir) ? -1 : 1)
+      (a.dirParts.length - b.dirParts.length) || (
+        (b.dir === a.dir) ? (b.name > a.name ? -1 : 1)
+          : (b.dir > a.dir ? -1 : 1)
+      )
     )
 }
 
@@ -141,24 +152,15 @@ const execute = async () => {
     (value.dirParts.length ? ': ' : '') +
     value.name
 
-  const longestTaskName = dirScripts
-    .map(script => script.name)
-    .map(name => name.length).sort((a, b) => a - b).reverse()[0]
-
-  const padName = (name: string, addMore: number) => name +
-    (new Array(Math.max(longestTaskName - name.length + addMore, 0)))
-      .join(' ')
-
   const shotern = (str: string, maxLength: number) =>
     str.substr(0, maxLength) + (str.length > maxLength ? '...' : '')
 
-  const maxAvailableWidth = (process.stdout as any).columns as number - 15
+  const maxAvailableWidth = (process.stdout as any).columns as number - 10
 
   const choises = dirScripts.map((value, i) => ({
-    value, name:
-    padName(getMenuName(value), (value.dir.length)) +
-    chalk.gray(` (${shotern(value.cmd, maxAvailableWidth - getMenuName(value).length)})`),
-    searchValue: value.dirParts.join(' ') + ' ' + value.name
+    value, name: getMenuName(value) +
+    chalk.gray(`\n- ${shotern(value.cmd, maxAvailableWidth)}`),
+    searchValue: value.dirParts.join('/') + ' ' + value.name
   }))
 
   const showChoise = async () => {

@@ -3,7 +3,7 @@
 > Better **yarn run**. 
 
 ## Why?
-![yrun](https://cloud.githubusercontent.com/assets/736697/25067111/3b8bf99a-2253-11e7-9a50-63d4e81fb134.gif)
+![yrun](https://cloud.githubusercontent.com/assets/736697/25089861/8df2ef30-2399-11e7-90f3-d1330b44bb9b.gif)
 
 ## Install
 
